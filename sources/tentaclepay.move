@@ -9,10 +9,25 @@ module tentaclepay::tentaclepay;
 use ika::ika::IKA;
 use ika_dwallet_2pc_mpc::coordinator::DWalletCoordinator;
 use ika_dwallet_2pc_mpc::coordinator_inner::{DWalletCap, UnverifiedPresignCap};
-use sui::balance::Balance;
+use sui::balance::{Self, Balance};
 use sui::coin::Coin;
+use sui::ed25519;
+use sui::event;
 use sui::sui::SUI;
+use usdc::usdc::USDC;
+
+// === Constants ===
+
+/// Length of an Ed25519 public key in bytes.
+const ED25519_PUBKEY_LEN: u64 = 32;
+
 // === Errors ===
+
+/// The verifier's signature over the attested data did not validate against the
+/// `verifier_pubkey` stored in `Protocol`.
+const EInvalidVerifierSignature: u64 = 0;
+/// The verifier public key supplied at protocol creation is not 32 bytes.
+const EInvalidPublicKey: u64 = 1;
 
 // === Structs ===
 
@@ -52,8 +67,31 @@ public struct Signer has key, store {
     sui_balance: Balance<SUI>,
 }
 
-public struct Config has key {
+/// Shared object holding the payment policy and the USDC vault.
+///
+/// `verifier_pubkey` is the verifier's Ed25519 public key — the raw key, not an
+/// address: a Sui address is `blake2b(flag ‖ pubkey)` and cannot be reversed into
+/// a pubkey, while `ed25519_verify` needs the key bytes.
+///
+/// `usdc_balance` accumulates payments as a `Balance<USDC>` (the non-`Coin`
+/// accumulator form); withdrawals are `AdminCap`-gated.
+///
+/// Has `key` only: a shared singleton that must never be wrapped or transferred.
+public struct Protocol has key {
     id: UID,
+    /// Ed25519 public key (32 bytes) of the trusted verifier.
+    verifier_pubkey: vector<u8>,
+    /// USDC collected from `pay_and_sign` callers.
+    usdc_balance: Balance<USDC>,
+}
+
+// === Events ===
+
+/// Emitted on every successful `pay_and_sign`.
+public struct MessageSigned has copy, drop {
+    sign_id: ID,
+    /// Amount of USDC deposited into the treasury for this call.
+    amount: u64,
 }
 
 // === Init ===
@@ -119,6 +157,41 @@ public fun create_signer(
     };
 
     transfer::public_share_object(signer);
+}
+
+/// Create and share the `Protocol` with an empty USDC vault.
+///
+/// `verifier_pubkey` must be a 32-byte Ed25519 public key.
+public fun create_protocol(
+    _: &AdminCap,
+    verifier_pubkey: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    assert!(verifier_pubkey.length() == ED25519_PUBKEY_LEN, EInvalidPublicKey);
+
+    let protocol = Protocol {
+        id: object::new(ctx),
+        verifier_pubkey,
+        usdc_balance: balance::zero<USDC>(),
+    };
+
+    transfer::share_object(protocol);
+}
+
+/// Rotate the trusted verifier's public key. Must be 32 bytes (Ed25519).
+public fun set_verifier_pubkey(_: &AdminCap, protocol: &mut Protocol, verifier_pubkey: vector<u8>) {
+    assert!(verifier_pubkey.length() == ED25519_PUBKEY_LEN, EInvalidPublicKey);
+    protocol.verifier_pubkey = verifier_pubkey;
+}
+
+/// Withdraw `amount` of USDC from the vault as a `Coin`, gated by `AdminCap`.
+public fun withdraw_usdc(
+    _: &AdminCap,
+    protocol: &mut Protocol,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<USDC> {
+    protocol.usdc_balance.split(amount).into_coin(ctx)
 }
 
 // === Helpers ===
@@ -199,24 +272,43 @@ public fun add_presigns(
     self.return_payment_coins(ika_coin, sui_coin);
 }
 
-public fun sign_message(
-    self: &mut Signer,
+public fun pay_and_sign(
+    self: &mut Protocol,
+    signer: &mut Signer,
     coordinator: &mut DWalletCoordinator,
+    payment: Coin<USDC>,
     message: vector<u8>,
     message_centralized_signature: vector<u8>,
+    // The verifier's Ed25519 signature over the attested data.
+    verifier_signature: vector<u8>,
     ctx: &mut TxContext,
 ): ID {
-    let (mut ika, mut sui) = self.withdraw_payment_coins(ctx);
+    // 0. Authorize: the verifier must have signed the attested data, else revert.
+    // TODO: hardcoded boilerplate — replace b"data1234" with the real payment
+    // context (e.g. message hash + amount + a per-call nonce) to bind the
+    // signature to this specific call and prevent replay.
+    let data = b"data1234";
+    assert!(
+        ed25519::ed25519_verify(&verifier_signature, &self.verifier_pubkey, &data),
+        EInvalidVerifierSignature,
+    );
+
+    // 0b. Collect payment. Any amount is accepted for now (validated later) and
+    // deposited whole into the vault.
+    let amount = payment.value();
+    self.usdc_balance.join(payment.into_balance());
+
+    let (mut ika, mut sui) = signer.withdraw_payment_coins(ctx);
 
     // 1. Pop and verify presign
-    let unverified_presign = self.presigns.swap_remove(0);
+    let unverified_presign = signer.presigns.swap_remove(0);
     let verified_presign = coordinator.verify_presign_cap(unverified_presign, ctx);
 
     // 2. Create message approval
     let approval = coordinator.approve_message(
-        &self.dwallet_cap,
-        self.signature_algorithm,
-        self.hash_scheme,
+        &signer.dwallet_cap,
+        signer.signature_algorithm,
+        signer.hash_scheme,
         message,
     );
 
@@ -237,7 +329,9 @@ public fun sign_message(
         ctx,
     );
 
-    self.return_payment_coins(ika, sui);
+    signer.return_payment_coins(ika, sui);
+
+    event::emit(MessageSigned { sign_id, amount });
 
     sign_id
 }

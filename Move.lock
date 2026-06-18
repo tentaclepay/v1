@@ -46,32 +46,62 @@ use_environment = "testnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
 
+[pinned.testnet.MoveStdlib_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "a4185da5659d8d299d34e1bb2515ff1f7e32a20a" }
+use_environment = "testnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
 [pinned.testnet.Sui]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "367fd808279bed26f7c64fc63160062a2ee29ab7" }
 use_environment = "testnet"
 manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
 deps = { MoveStdlib = "MoveStdlib" }
 
+[pinned.testnet.Sui_1]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "a4185da5659d8d299d34e1bb2515ff1f7e32a20a" }
+use_environment = "testnet"
+manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
+deps = { MoveStdlib = "MoveStdlib_1" }
+
 [pinned.testnet.ika]
-source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika", rev = "8646661ff7df66e4efc8388d95c672f380c58278" }
+source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika", rev = "2997208f27e643b43faa8061badc4dd1280f1588" }
 use_environment = "testnet"
 manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
 deps = { std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.ika_common]
-source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_common", rev = "8646661ff7df66e4efc8388d95c672f380c58278" }
+source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_common", rev = "2997208f27e643b43faa8061badc4dd1280f1588" }
 use_environment = "testnet"
 manifest_digest = "35792110B41766BEA1031D5709EBBC0CAFB92F0A0FE4F10946CC8EC513B6B6D4"
 deps = { ika = "ika", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.ika_dwallet_2pc_mpc]
-source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_dwallet_2pc_mpc", rev = "8646661ff7df66e4efc8388d95c672f380c58278" }
+source = { git = "https://github.com/dwallet-labs/ika.git", subdir = "deployed_contracts/testnet/ika_dwallet_2pc_mpc", rev = "2997208f27e643b43faa8061badc4dd1280f1588" }
 use_environment = "testnet"
 manifest_digest = "5AD0AECEAA21ED1EFC82E9CC80C9A1599D2991B9AB2CED0851E73B8A59E36932"
 deps = { ika = "ika", ika_common = "ika_common", std = "MoveStdlib", sui = "Sui" }
 
+[pinned.testnet.stablecoin]
+source = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/stablecoin", rev = "d0904aec1bbe46b38f811654070032363a5a2966" }
+use_environment = "testnet"
+manifest_digest = "CA8A8C98A033B13B98F0E9D48DA2051BB8943A549EE1F9C080A84F7B9FAF0F0C"
+deps = { Sui = "Sui_1", sui_extensions = "sui_extensions" }
+
+[pinned.testnet.sui_extensions]
+source = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/sui_extensions", rev = "d0904aec1bbe46b38f811654070032363a5a2966" }
+use_environment = "testnet"
+manifest_digest = "1AD09726AC05F000A00A1E0CB700C2036E67E05ACD42D402DD6B54FF2EFBB1E9"
+deps = { Sui = "Sui_1" }
+
 [pinned.testnet.tentaclepay]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "8FA62283D889B71E4CCF2A3DB0861B6B16BCCD07A1B0B18BD42B050AFD0FFD19"
-deps = { ika = "ika", ika_dwallet_2pc_mpc = "ika_dwallet_2pc_mpc", std = "MoveStdlib", sui = "Sui" }
+manifest_digest = "904FCCEC05E564F522271EEFEBE33C1A7293639D7138FD4B221267BC89DEBEED"
+deps = { ika = "ika", ika_dwallet_2pc_mpc = "ika_dwallet_2pc_mpc", std = "MoveStdlib", sui = "Sui", usdc = "usdc" }
+
+[pinned.testnet.usdc]
+source = { git = "https://github.com/circlefin/stablecoin-sui.git", subdir = "packages/usdc", rev = "d0904aec1bbe46b38f811654070032363a5a2966" }
+use_environment = "testnet"
+manifest_digest = "ABCB372881B4AA0562116087311A98C504CD81780C15E124BB70CD13E5A21CE4"
+deps = { Sui = "Sui_1", stablecoin = "stablecoin", sui_extensions = "sui_extensions" }
