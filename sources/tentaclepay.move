@@ -10,9 +10,12 @@ use ika::ika::IKA;
 use ika_dwallet_2pc_mpc::coordinator::DWalletCoordinator;
 use ika_dwallet_2pc_mpc::coordinator_inner::{DWalletCap, UnverifiedPresignCap};
 use sui::balance::{Self, Balance};
+use sui::bcs;
+use sui::clock::Clock;
 use sui::coin::Coin;
 use sui::ed25519;
 use sui::event;
+use sui::hash;
 use sui::sui::SUI;
 use usdc::usdc::USDC;
 
@@ -28,6 +31,9 @@ const ED25519_PUBKEY_LEN: u64 = 32;
 const EInvalidVerifierSignature: u64 = 0;
 /// The verifier public key supplied at protocol creation is not 32 bytes.
 const EInvalidPublicKey: u64 = 1;
+/// The verifier's attestation has expired: `valid_before` is at or before the
+/// current `Clock` time.
+const EAttestationExpired: u64 = 2;
 
 // === Structs ===
 
@@ -272,6 +278,26 @@ public fun add_presigns(
     self.return_payment_coins(ika_coin, sui_coin);
 }
 
+/// Pay USDC and request a threshold signature over `message`, gated by a
+/// verifier attestation bound to this exact call.
+///
+/// The verifier signs (with the Ed25519 key in `Protocol`) the digest
+///
+/// ```text
+/// keccak256(
+///     "pay_and_sign"
+///       || protocol.id || signer.id || coordinator.id
+///       || payment.value || message || keccak256(message_centralized_signature)
+///       || valid_before
+/// )
+/// ```
+///
+/// so a caller must request a fresh attestation from the verifier before it can
+/// call. Binding the protocol, signer, coordinator, amount, message, and the
+/// centralized signature stops an attestation being replayed against any other
+/// call; `valid_before` bounds its lifetime against the on-chain `Clock`.
+/// `payment.value` and `valid_before` are encoded as little-endian BCS `u64`,
+/// the object ids as their 32 raw address bytes, and `message` is appended raw.
 public fun pay_and_sign(
     self: &mut Protocol,
     signer: &mut Signer,
@@ -279,23 +305,42 @@ public fun pay_and_sign(
     payment: Coin<USDC>,
     message: vector<u8>,
     message_centralized_signature: vector<u8>,
-    // The verifier's Ed25519 signature over the attested data.
+    // The verifier's Ed25519 signature over the attested digest.
     verifier_signature: vector<u8>,
+    // Unix time in ms after which the attestation is no longer accepted.
+    valid_before: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    // 0. Authorize: the verifier must have signed the attested data, else revert.
-    // TODO: hardcoded boilerplate — replace b"data1234" with the real payment
-    // context (e.g. message hash + amount + a per-call nonce) to bind the
-    // signature to this specific call and prevent replay.
-    let data = b"data1234";
+    // 0. Authorize this call against the verifier's attestation.
+
+    // 0a. The attestation must still be live. "Now" comes from the trusted
+    // `Clock`, not from the signed data — the verifier can't know the block
+    // timestamp ahead of time, so freshness is enforced as `now <= valid_before`
+    // with the verifier-signed deadline.
+    assert!(clock.timestamp_ms() <= valid_before, EAttestationExpired);
+
+    let amount = payment.value();
+
+    // 0b. Rebuild the digest the verifier signed from this call's parameters and
+    // verify it against `verifier_pubkey`. `keccak256` of the centralized
+    // signature commits to it without bloating the preimage.
+    let mut preimage = b"pay_and_sign";
+    preimage.append(object::id(self).to_bytes());
+    preimage.append(object::id(signer).to_bytes());
+    preimage.append(object::id(coordinator).to_bytes());
+    preimage.append(bcs::to_bytes(&amount));
+    preimage.append(copy message);
+    preimage.append(hash::keccak256(&message_centralized_signature));
+    preimage.append(bcs::to_bytes(&valid_before));
+
+    let data = hash::keccak256(&preimage);
     assert!(
         ed25519::ed25519_verify(&verifier_signature, &self.verifier_pubkey, &data),
         EInvalidVerifierSignature,
     );
 
-    // 0b. Collect payment. Any amount is accepted for now (validated later) and
-    // deposited whole into the vault.
-    let amount = payment.value();
+    // 0c. Collect payment, deposited whole into the vault.
     self.usdc_balance.join(payment.into_balance());
 
     let (mut ika, mut sui) = signer.withdraw_payment_coins(ctx);
