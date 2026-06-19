@@ -93,6 +93,29 @@ public struct Protocol has key {
 
 // === Events ===
 
+ /// Emitted when `create_signer` shares a new `Signer`.
+public struct SignerCreated has copy, drop {
+    signer_id: ID,
+    network_encryption_key_id: ID,
+    curve: u32,
+    signature_algorithm: u32,
+    hash_scheme: u32,
+}
+
+/// Emitted when `create_protocol` shares a new `Protocol`.
+public struct ProtocolCreated has copy, drop {
+    protocol_id: ID,
+    /// Ed25519 public key (32 bytes) of the trusted verifier.
+    verifier_pubkey: vector<u8>,
+}
+
+/// Emitted when `set_verifier_pubkey` rotates the trusted verifier's key.
+public struct VerifierPubkeyUpdated has copy, drop {
+    protocol_id: ID,
+    /// New Ed25519 public key (32 bytes) now stored in `Protocol`.
+    verifier_pubkey: vector<u8>,
+}
+
 /// Emitted on every successful `pay_and_sign`.
 public struct MessageSigned has copy, drop {
     sign_id: ID,
@@ -162,6 +185,14 @@ public fun create_signer(
         network_encryption_key_id,
     };
 
+    event::emit(SignerCreated {
+        signer_id: object::id(&signer),
+        network_encryption_key_id,
+        curve,
+        signature_algorithm,
+        hash_scheme,
+    });
+
     transfer::public_share_object(signer);
 }
 
@@ -181,6 +212,11 @@ public fun create_protocol(
         usdc_balance: balance::zero<USDC>(),
     };
 
+    event::emit(ProtocolCreated {
+        protocol_id: object::id(&protocol),
+        verifier_pubkey: protocol.verifier_pubkey,
+    });
+
     transfer::share_object(protocol);
 }
 
@@ -188,6 +224,11 @@ public fun create_protocol(
 public fun set_verifier_pubkey(_: &AdminCap, protocol: &mut Protocol, verifier_pubkey: vector<u8>) {
     assert!(verifier_pubkey.length() == ED25519_PUBKEY_LEN, EInvalidPublicKey);
     protocol.verifier_pubkey = verifier_pubkey;
+
+    event::emit(VerifierPubkeyUpdated {
+        protocol_id: object::id(protocol),
+        verifier_pubkey: protocol.verifier_pubkey,
+    });
 }
 
 /// Withdraw `amount` of USDC from the vault as a `Coin`, gated by `AdminCap`.
