@@ -1,6 +1,5 @@
 import {
 	createRandomSessionIdentifier,
-	Curve,
 	getNetworkConfig,
 	IkaClient,
 	prepareDKGAsync,
@@ -9,20 +8,31 @@ import {
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { coinWithBalance, Transaction } from "@mysten/sui/transactions";
 
+import { package_id, module, admin_cap } from "./state.json";
+
 import {
 	baseUrl,
+	ikaCoinType,
 	network,
-	owner,
-	tentaclepayAdminCap,
-	tentaclepayPackageId,
+	parseIkaCurve,
+	publisher,
+	rootSeed,
+	SignerCreatedEvent,
+	type Curve,
+	type HashScheme,
+	type SignatureAlgorithm,
 } from "./shared";
 
-const curve = 0; // SECP256K1
-const signatureAlgorithm = 0; // ECDSA
-const hashScheme = 0; // Keccak256
+const curve: Curve = 0; // SECP256K1
+const signatureAlgorithm: SignatureAlgorithm<typeof curve> = 0; // ECDSA
+const hashScheme: HashScheme<typeof curve, typeof signatureAlgorithm> = 0; // Keccak256
 
-const initialIka = 50_000_000;
-const initialSui = 50_000_000;
+const ikaCurve = parseIkaCurve(curve);
+
+const initialIka = 2_000_000_000; // 2
+const initialSui = 500_000_000; // 0.5
+
+const publisherAddress = publisher.toSuiAddress();
 
 const suiClient = new SuiGrpcClient({
 	network,
@@ -42,8 +52,8 @@ const ikaCoordinator = ikaClient.ikaConfig.objects.ikaDWalletCoordinator;
 const networkEncryptionKey = await ikaClient.getLatestNetworkEncryptionKey();
 
 const userShareEncryptionKeys = await UserShareEncryptionKeys.fromRootSeedKey(
-	new TextEncoder().encode(Bun.env.SEED!),
-	Curve.SECP256K1,
+	new TextEncoder().encode(rootSeed),
+	ikaCurve,
 );
 
 const identifier = createRandomSessionIdentifier();
@@ -51,21 +61,21 @@ const identifier = createRandomSessionIdentifier();
 // Prepare DKG - this generates the necessary cryptographic materials
 const dkgRequestInput = await prepareDKGAsync(
 	ikaClient,
-	Curve.SECP256K1,
+	ikaCurve,
 	userShareEncryptionKeys,
 	identifier,
-	owner.toSuiAddress(),
+	publisherAddress,
 );
 
 const tx = new Transaction();
 
-tx.setSender(owner.toSuiAddress());
+tx.setSender(publisherAddress);
 tx.moveCall({
-	package: tentaclepayPackageId,
-	module: "tentaclepay",
+	package: package_id,
+	module: module,
 	function: "create_signer",
 	arguments: [
-		tx.object(tentaclepayAdminCap),
+		tx.object(admin_cap),
 		tx.object(ikaCoordinator.objectID),
 		tx.pure.u32(curve),
 		tx.pure.u32(signatureAlgorithm),
@@ -77,7 +87,7 @@ tx.moveCall({
 		tx.pure.vector("u8", Array.from(identifier)),
 		coinWithBalance({
 			balance: initialIka,
-			type: "0x1f26bb2f711ff82dcda4d02c77d5123089cb7f8418751474b9fb744ce031526a::ika::IKA",
+			type: ikaCoinType,
 		}),
 		coinWithBalance({ balance: initialSui }),
 	],
@@ -85,13 +95,27 @@ tx.moveCall({
 
 const txBytes = await tx.build({ client: suiClient });
 
-const txResult = await suiClient.signAndExecuteTransaction({
+const result = await suiClient.signAndExecuteTransaction({
 	transaction: txBytes,
-	signer: owner,
+	signer: publisher,
 	include: {
-		transaction: true,
-		effects: true,
+		events: true,
 	},
 });
 
-console.dir(txResult, { depth: Infinity });
+if (result.$kind === "FailedTransaction")
+	throw new Error("Transaction failed!");
+
+const signerCreatedEvent = result.Transaction.events.find(
+	(event) =>
+		event.packageId === package_id &&
+		event.module === module &&
+		event.eventType === `${package_id}::${module}::SignerCreated`,
+);
+if (!signerCreatedEvent) throw new Error("No signer created event");
+
+const { signer_id } = SignerCreatedEvent.parse(signerCreatedEvent.bcs);
+
+console.log({
+	signer_id,
+});

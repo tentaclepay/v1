@@ -1,0 +1,7 @@
+{
+	"package_id": "0x524cbabd8f4cd78f0913d638d10c101679e31ba4064603f82de6dee4fd59fd44",
+	"module": "tentaclepay",
+	"admin_cap": "0x09a3cae9ed10dac4b4074dcf1bb2f04dae3e5b8647d817abd91b0106395e1099",
+	"protocol_id": "0xb6e8b73d73164ed1a645bfa29d0e2d74bb2047ad935a0e93bd4d768a2a16bc30",
+	"signer_id": "0xd4323a86da20c455a11f766476415111589d9e17e8a95c90f482b26597ead5e1"
+}
